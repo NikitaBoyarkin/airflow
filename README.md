@@ -1,5 +1,7 @@
 # Airflow DAG Platform
 
+[![CI](https://github.com/NikitaBoyarkin/airflow/actions/workflows/ci.yml/badge.svg)](https://github.com/NikitaBoyarkin/airflow/actions/workflows/ci.yml)
+
 Портфельный Data Engineering проект: платформа отчётов на Apache Airflow 3, где каждый отчёт — версионируемый DAG. Заменяет ручную выгрузку агрегатов из Postgres и перенос в Google Sheets воспроизводимым, идемпотентным пайплайном с DQ-валидацией, алертами и метриками запусков.
 
 ## Что решает
