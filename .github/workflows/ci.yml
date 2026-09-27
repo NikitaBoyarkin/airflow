@@ -20,7 +20,9 @@ jobs:
           python-version: "3.14"
 
       # Кэш uv ключуется по uv.lock — холодный sync тянет ~1.3G (airflow + провайдеры).
-      - uses: astral-sh/setup-uv@v10
+      # Пиним точный тег: astral-sh перестал публиковать moving-теги после v7,
+      # `@v10` не резолвится ("unable to find version v10").
+      - uses: astral-sh/setup-uv@v10.2.0
         with:
           enable-cache: true
 
