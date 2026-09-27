@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+
+      # Кэш uv ключуется по uv.lock — холодный sync тянет ~1.3G (airflow + провайдеры).
+      - uses: astral-sh/setup-uv@v10
+        with:
+          enable-cache: true
+
+      # Airflow нужен на этапе импорта: тесты импортируют DAG-модули, а те — airflow.sdk.
+      # Живой Postgres не нужен — все хуки замоканы (tests/test_integration_tasks.py).
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: Lint (ruff)
+        run: uv run ruff check .
+
+      - name: Format check (ruff)
+        run: uv run ruff format --check .
+
+      - name: Type check (mypy)
+        run: uv run mypy
+
+      - name: Tests (pytest)
+        run: uv run pytest

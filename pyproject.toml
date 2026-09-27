@@ -1,0 +1,37 @@
+[project]
+name = "airflow"
+version = "0.1.0"
+description = "Airflow DAG Platform: ежедневные отчёты Postgres -> Google Sheets"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "apache-airflow>=3.3",
+    "apache-airflow-providers-postgres",
+    "apache-airflow-providers-google",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "ruff>=0.15",
+    "mypy>=1.16",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+# py313, не py314: на py314 `ruff format` переписывает `except (A, B):` в
+# PEP 758 `except A, B:` — валидно для 3.14, но незнакомо читателю и ломает
+# любой прогон на 3.13. Формат держим консервативным.
+target-version = "py313"
+line-length = 88
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "B", "C4", "UP"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.14"
+ignore_missing_imports = true
+files = ["dags", "scripts", "tests"]

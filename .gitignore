@@ -1,0 +1,23 @@
+# Airflow runtime (Q1: локальный standalone-режим)
+airflow_home/
+scripts/logs/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Tooling caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# macOS
+.DS_Store
+
+# Secrets (REQ NFR: credentials only via Airflow Connections/Variables)
+.env
+*.pem
+*.key
