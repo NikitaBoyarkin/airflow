@@ -2,6 +2,37 @@
 
 [![CI](https://github.com/NikitaBoyarkin/airflow/actions/workflows/ci.yml/badge.svg)](https://github.com/NikitaBoyarkin/airflow/actions/workflows/ci.yml)
 
+> Каждый отчёт — версионируемый DAG: 2 DAG-а и 64 теста заменяют ручную выгрузку идемпотентным пайплайном с DQ-валидацией.
+
+## Navigation
+- 🌐 [Портфолио](https://nikitaboyarkin.github.io)
+- 🏦 [Флагман: Volta neobank](https://github.com/NikitaBoyarkin/volta-banking)
+- 🧪 Связанные: [supabase-product-analytics](https://github.com/NikitaBoyarkin/supabase-product-analytics) · [streamlit-app](https://github.com/NikitaBoyarkin/streamlit-app) · [airflow](https://github.com/NikitaBoyarkin/airflow)
+
+**На этой странице:** [Ситуация](#ситуация) · [Задача](#задача) · [Действия](#действия) · [Результат](#результат) · [DAG-и](#dag-и) · [Структура](#структура) · [Стек](#стек) · [Запуск](#запуск) · [Качество кода](#качество-кода) · [Поток данных](#поток-данных) · [Observability](#observability)
+
+## Ситуация
+
+Ручной отчёт по продажам (SQL-клиент → копирование в Sheets) давал задержки, ошибки копирования и отсутствие воспроизводимости.
+
+## Задача
+
+Заменить ручную выгрузку агрегатов из Postgres воспроизводимым, идемпотентным пайплайном с DQ-валидацией, алертами и метриками запусков.
+
+## Действия
+
+- Оформил каждый отчёт как версионируемый DAG в Airflow 3 по общему шаблону `fetch → validate → write → record_metrics` (`@task`-декораторы, Airflow 3 SDK).
+- Вынес платформенные куски в `shared/`: `config.py` (Airflow Variables), `dq.py`, `alerts.py`, `metrics.py`, `output.py`, `windows.py`.
+- Задал полуинтервальное окно `[logical_date − N, logical_date)` и `catchup=False`; backfill — явно через `airflow dags backfill`.
+- Сделал приёмником Google Sheets (или CSV-фолбэк `output="file"`).
+- Добавил observability: каждый успешный запуск пишет строку в `dag_metrics`, падение ловит `on_failure_callback`.
+- Собрал CI из четырёх гейтов: `ruff check`, `ruff format --check`, `mypy`, `pytest`.
+
+## Результат
+
+- 2 DAG-а (`daily_sales_report`, `weekly_sales_summary`) и 64 теста без Airflow-сервисов и БД; новый отчёт добавляется по общему шаблону.
+- `scripts/metrics_report.py` агрегирует success rate и p95 duration за N дней.
+
 Портфельный Data Engineering проект: платформа отчётов на Apache Airflow 3, где каждый отчёт — версионируемый DAG. Заменяет ручную выгрузку агрегатов из Postgres и перенос в Google Sheets воспроизводимым, идемпотентным пайплайном с DQ-валидацией, алертами и метриками запусков.
 
 ## Что решает
