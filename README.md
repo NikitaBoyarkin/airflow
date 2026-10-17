@@ -9,6 +9,8 @@
 - 🏦 [Флагман: Volta neobank](https://github.com/NikitaBoyarkin/volta-banking)
 - 🧪 Связанные: [supabase-product-analytics](https://github.com/NikitaBoyarkin/supabase-product-analytics) · [streamlit-app](https://github.com/NikitaBoyarkin/streamlit-app) · [airflow](https://github.com/NikitaBoyarkin/airflow)
 
+**▶ [Диаграмма: Airflow DAG-платформа: идемпотентный поток отчёта](docs/diagrams/airflow.html)** — открывается в браузере, без установки и сборки
+
 **На этой странице:** [Ситуация](#ситуация) · [Задача](#задача) · [Действия](#действия) · [Результат](#результат) · [DAG-и](#dag-и) · [Структура](#структура) · [Стек](#стек) · [Запуск](#запуск) · [Качество кода](#качество-кода) · [Поток данных](#поток-данных) · [Observability](#observability)
 
 ## Ситуация
