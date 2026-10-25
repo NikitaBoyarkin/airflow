@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/NikitaBoyarkin/airflow/actions/workflows/ci.yml/badge.svg)](https://github.com/NikitaBoyarkin/airflow/actions/workflows/ci.yml)
 
-> Каждый отчёт — версионируемый DAG: 2 DAG-а и 64 теста заменяют ручную выгрузку идемпотентным пайплайном с DQ-валидацией.
+> Каждый отчёт — версионируемый DAG: 3 DAG-а и 69 тестов заменяют ручную выгрузку идемпотентным пайплайном с DQ-валидацией.
 
 ## Navigation
 - 🌐 [Портфолио](https://nikitaboyarkin.github.io)
@@ -32,7 +32,7 @@
 
 ## Результат
 
-- 2 DAG-а (`daily_sales_report`, `weekly_sales_summary`) и 64 теста без Airflow-сервисов и БД; новый отчёт добавляется по общему шаблону.
+- 3 DAG-а (`daily_sales_report`, `weekly_sales_summary`, `delivery_control_tower`) и 69 тестов без Airflow-сервисов и БД; новый отчёт добавляется по общему шаблону.
 - `scripts/metrics_report.py` агрегирует success rate и p95 duration за N дней.
 
 Портфельный Data Engineering проект: платформа отчётов на Apache Airflow 3, где каждый отчёт — версионируемый DAG. Заменяет ручную выгрузку агрегатов из Postgres и перенос в Google Sheets воспроизводимым, идемпотентным пайплайном с DQ-валидацией, алертами и метриками запусков.
@@ -47,8 +47,11 @@
 |-----|-----------|------------|----------|
 | `daily_sales_report` | `@daily` | Агрегат продаж за сутки (`sale_date`, `product_id`, `revenue`, `orders`) | Google Sheets (или CSV-фолбэк) |
 | `weekly_sales_summary` | `@weekly` | Сводка продаж за 7 суток по `category` (`category`, `revenue`, `orders`) | CSV ( Sheets опционально) |
+| `delivery_control_tower` | вручную (`schedule=None`) | 8 задач: CSV → staging → DQ-гейт → витрины DuckDB → 5 анализов параллельно | файлы проекта `delivery-control-tower` |
 
 Каждый DAG строится по шаблону `fetch → validate → write → record_metrics` (`@task`-декораторы, Airflow 3 SDK). Окно — полуинтервал `[logical_date − N, logical_date)`; `catchup=False` — пропущенные периоды не догоняются, backfill явно через `airflow dags backfill`.
+
+`delivery_control_tower` — пример оркестрации **чужого** проекта: у платформы нет pandas/duckdb, у `delivery-control-tower` нет Airflow, поэтому каждая задача запускает `uv run python -m delivery.<module>` в окружении того проекта через `subprocess`. Источник статический (агрегат за 2022-01-01…2022-06-30), отсюда `schedule=None`. Замер прогона 2026-10-25: 440 с, из них 413 с — задача `forecast`; параллельная ветка после витрин экономит ~30 с, то есть ценность оркестратора здесь в DQ-гейте и видимости падений, а не в скорости.
 
 ## Структура
 
@@ -56,6 +59,7 @@
 dags/
   daily_sales_report.py     # DAG: Postgres -> Google Sheets / CSV
   weekly_sales_summary.py   # DAG: Postgres -> CSV (сводка по категориям)
+  delivery_control_tower.py # DAG: внешний проект delivery-control-tower (DuckDB)
   shared/                   # переиспользуемые модули платформы (REQ-001)
     config.py               # конфиг из Airflow Variables, без хардкода
     dq.py                   # DQ-валидация перед записью
@@ -69,6 +73,7 @@ scripts/
 tests/                      # pytest: DAG, shared-модули, интеграционные таски
 docs/prd.md                 # PRD проекта
 data/out/                   # выходные CSV (dev-режим output="file")
+airflow_home/               # AIRFLOW_HOME: cfg, sqlite-метастор, логи (gitignored)
 ```
 
 ## Стек
@@ -88,15 +93,37 @@ uv run pytest                             # тесты (без Airflow runtime)
 # Демо-данные в Postgres (синтетика, ~N строк/день):
 uv run python scripts/generate_sales_data.py --days 7 --rows-per-day 10000
 
-# Airflow standalone (UI http://localhost:8080, admin/admin):
-export AIRFLOW_HOME=$(pwd)
+# Airflow standalone (UI http://localhost:8082):
+export AIRFLOW_HOME=$(pwd)/airflow_home
 uv run airflow standalone
 
 # Отчёт по метрикам запусков:
 uv run python scripts/metrics_report.py --days 7
 ```
 
-CLI-команды Airflow требуют `export AIRFLOW_HOME=$(pwd)` — иначе они смотрят в `~/airflow` и падают с «Database migration required».
+CLI-команды Airflow требуют `AIRFLOW_HOME`, иначе они смотрят в `~/airflow` и падают с «Database migration required».
+
+### Свежий клон: три переменные до первого запуска
+
+`airflow_home/` в `.gitignore` — это конфиг машины, а не репозитория, поэтому на новом клоне файла `airflow_home/airflow.cfg` не существует. Порт занят (8080 — Trino, 8081 — личный инстанс из `~/airflow`), и выставить один только порт API недостаточно:
+
+```bash
+export AIRFLOW_HOME=$(pwd)/airflow_home
+export AIRFLOW__API__PORT=8082
+export AIRFLOW__CORE__EXECUTION_API_SERVER_URL=http://localhost:8082/execution/
+export AIRFLOW__CORE__DAGS_FOLDER=$(pwd)/dags
+uv run airflow standalone
+```
+
+**Почему третий ключ обязателен.** `airflow standalone` поднимает api-server на `[api] port`, но LocalExecutor отправляет задачи на `[core] execution_api_server_url`, который по умолчанию остаётся `http://localhost:8080/execution/` и за портом API не следует. На этой машине на 8080 отвечает Trino: 404, после чего Airflow 3.3.2 падает в цикле с `TypeError: HTTPStatusError.__init__() missing 2 required keyword-only arguments: 'request' and 'response'` (баг обработки ошибки httpx). Симптом: dag_run висит в `running`, первая задача — вечно `queued`, при этом UI открывается нормально.
+
+Проверка после старта:
+
+```bash
+uv run airflow config get-value core execution_api_server_url   # ожидаем http://localhost:8082/execution/
+```
+
+Логин `admin`, пароль генерируется при первом запуске и лежит в `airflow_home/simple_auth_manager_passwords.json.generated`.
 
 ## Качество кода
 
@@ -106,7 +133,7 @@ CI (`.github/workflows/ci.yml`) на каждый push и PR гоняет чет
 uv run ruff check .          # линт: E,W,F,I,B,C4,UP (line-length игнорируется)
 uv run ruff format --check . # формат; применить — uv run ruff format .
 uv run mypy                  # типы: dags/, scripts/, tests/
-uv run pytest                # 64 теста, без Airflow-сервисов и БД (хуки замоканы)
+uv run pytest                # 69 тестов, без Airflow-сервисов и БД (хуки замоканы)
 ```
 
 Конфиг — в `pyproject.toml` (`[tool.ruff]`, `[tool.mypy]`). `target-version = "py313"` выбран намеренно: на `py314` `ruff format` переписывает `except (TypeError, ValueError):` в PEP 758 `except TypeError, ValueError:` — валидно для 3.14, но ломает прогон на 3.13.
