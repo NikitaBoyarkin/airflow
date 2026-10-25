@@ -1,0 +1,72 @@
+name: airflow
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-airflow_demo}
+    ports:
+      - "${POSTGRES_PORT:-5434}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-airflow_demo}",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  airflow:
+    build:
+      context: .
+      args:
+        AIRFLOW_VERSION: "3.3.2"
+        PYTHON_VERSION: "3.12"
+    # Образ Airflow рассчитан на произвольный UID с GID=0. Домашний UID нужен,
+    # чтобы запись в bind-mount ./data (CSV-фолбэк) не упиралась в права.
+    user: "${AIRFLOW_UID:-50000}:0"
+    command: standalone
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "${AIRFLOW_PORT:-8082}:8080"
+    environment:
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      # Свежий метастор создаёт DAG-и на паузе: без этого первый trigger висит в queued.
+      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "false"
+      AIRFLOW__CORE__DAGS_FOLDER: /opt/airflow/dags
+      # Внутри контейнера api-server на дефолтном 8080: наружу он выходит через
+      # ${AIRFLOW_PORT}, но LocalExecutor ходит по внутреннему адресу, поэтому
+      # здесь именно 8080 (иначе — баг «порт не следует», см. README:118).
+      AIRFLOW__CORE__EXECUTION_API_SERVER_URL: http://localhost:8080/execution/
+      AIRFLOW_CONN_POSTGRES_DEFAULT: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-airflow_demo}
+      # Dev-режим output="file": CSV в data/out/, Google-креды не нужны.
+      AIRFLOW_VAR_AIRFLOW_CFG_SALES_REPORT_OUTPUT: file
+      AIRFLOW_VAR_AIRFLOW_CFG_WEEKLY_SUMMARY_OUTPUT: file
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./scripts:/opt/airflow/scripts
+      - ./data:/opt/airflow/data
+      - ./tests:/opt/airflow/tests
+      - airflow_home:/opt/airflow
+      # delivery_control_tower (dags/delivery_control_tower.py:26) ждёт sibling-репо
+      # в Path.home()/Desktop/00 ide/00 portfolio/delivery-control-tower и бинарь uv,
+      # которого в образе нет, — поэтому DAG гоняется только на хосте. Чтобы всё же
+      # смонтировать (путь на хосте должен существовать), раскомментировать:
+      # - "${HOME}/Desktop/00 ide/00 portfolio/delivery-control-tower:/home/airflow/Desktop/00 ide/00 portfolio/delivery-control-tower:ro"
+
+# Демо-данные (в generate_sales_data.py:61-66 нет --password, пароль через PGPASSWORD;
+# psycopg2-binary уже в образе). Запускать после `docker compose up -d postgres`:
+#   docker compose run --rm -e PGPASSWORD=postgres airflow \
+#       python scripts/generate_sales_data.py \
+#       --host postgres --port 5432 --user postgres --db airflow_demo --days 7
+
+volumes:
+  postgres_data:
+  airflow_home:

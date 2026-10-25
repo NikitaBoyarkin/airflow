@@ -90,7 +90,7 @@ airflow_home/               # AIRFLOW_HOME: cfg, sqlite-метастор, лог
 uv sync                                   # зависимости
 uv run pytest                             # тесты (без Airflow runtime)
 
-# Демо-данные в Postgres (синтетика, ~N строк/день):
+# Демо-данные в Postgres (синтетика, 10 000 строк/день; замер 2026-10-25 — 70 000 за 7 суток):
 uv run python scripts/generate_sales_data.py --days 7 --rows-per-day 10000
 
 # Airflow standalone (UI http://localhost:8082):
@@ -124,6 +124,28 @@ uv run airflow config get-value core execution_api_server_url   # ожидаем
 ```
 
 Логин `admin`, пароль генерируется при первом запуске и лежит в `airflow_home/simple_auth_manager_passwords.json.generated`.
+
+### Docker Compose (запуск с нуля без локального Airflow)
+
+```bash
+cp .env.example .env
+echo "AIRFLOW_UID=$(id -u)" >> .env        # чтобы контейнер писал CSV в ./data
+docker compose up -d --build
+
+# Демо-данные в контейнерный Postgres (сервис `postgres`, порт внутри 5432):
+docker compose run --rm -e PGPASSWORD=postgres airflow \
+    python scripts/generate_sales_data.py \
+    --host postgres --port 5432 --user postgres --db airflow_demo --days 7
+```
+
+UI — http://localhost:8082, логин `admin`, пароль печатается в `docker compose logs airflow` при первом старте. DAG-и создаются сразу включёнными (`DAGS_ARE_PAUSED_AT_CREATION=false`); если метастор остался с прошлого запуска — `docker compose exec airflow airflow dags unpause daily_sales_report`, иначе trigger висит в `queued`.
+
+| Сервис | Host | Контейнер |
+|---|---|---|
+| Airflow UI | `8082` (`AIRFLOW_PORT`) | `8080` |
+| Postgres | `5434` (`POSTGRES_PORT`) | `5432` |
+
+Внутри контейнера `AIRFLOW__CORE__EXECUTION_API_SERVER_URL` указывает на внутренний `8080` — смена наружного `AIRFLOW_PORT` не требует правки этого ключа (в отличие от локального сценария выше). DAG-и стартуют в dev-режиме `output="file"` (`AIRFLOW_VAR_AIRFLOW_CFG_*_OUTPUT=file`), поэтому Google-креды не нужны, а CSV появляются в `data/out/`. `delivery_control_tower` в контейнере не запускается: ему нужен sibling-репозиторий и `uv`, которых в образе нет — этот DAG остаётся host-only. Образ собран на Python 3.12 (официальные образы Airflow не собираются под 3.14 из `pyproject.toml`), локальная разработка остаётся на 3.14 через `uv`.
 
 ## Качество кода
 

@@ -1,6 +1,6 @@
 """Генератор синтетических продаж для демо (Q3).
 
-Создаёт таблицу sales в Postgres и заполняет ~N строк/день за последние D суток.
+Создаёт таблицу sales в Postgres и заполняет rows_per_day строк за каждые из последних D суток.
 Идемпотентен: строки в окне перезаписываются (DELETE + INSERT).
 
 Таймстампы — UTC, чтобы окно DAG [logical_date-1, logical_date) совпадало с данными.
@@ -75,12 +75,17 @@ def main() -> None:
     conn.autocommit = True
     end = datetime.now(UTC).date()
     start = end - timedelta(days=args.days)
+    # Границы окна — aware-UTC: `date` в DELETE приводится к timestamptz в зоне
+    # сессии (не UTC), и хвост суток не удаляется — повторный запуск дублирует строки.
+    start_dt = datetime.combine(start, time.min, tzinfo=UTC)
+    end_dt = datetime.combine(end, time.min, tzinfo=UTC)
 
     with conn.cursor() as cur:
         cur.execute(DDL)
         cur.execute(METRICS_DDL)
         cur.execute(
-            "DELETE FROM sales WHERE created_at >= %s AND created_at < %s", (start, end)
+            "DELETE FROM sales WHERE created_at >= %s AND created_at < %s",
+            (start_dt, end_dt),
         )
         rng = random.Random(42)
         rows = []
