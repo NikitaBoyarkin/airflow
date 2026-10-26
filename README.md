@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/NikitaBoyarkin/airflow/actions/workflows/ci.yml/badge.svg)](https://github.com/NikitaBoyarkin/airflow/actions/workflows/ci.yml)
 
-> Каждый отчёт — версионируемый DAG: 3 DAG-а и 69 тестов заменяют ручную выгрузку идемпотентным пайплайном с DQ-валидацией.
+> Каждый отчёт — версионируемый DAG: 3 DAG-а и 72 теста заменяют ручную выгрузку идемпотентным пайплайном с DQ-валидацией.
 
 ## Navigation
 - 🌐 [Портфолио](https://nikitaboyarkin.github.io)
@@ -32,7 +32,7 @@
 
 ## Результат
 
-- 3 DAG-а (`daily_sales_report`, `weekly_sales_summary`, `delivery_control_tower`) и 69 тестов без Airflow-сервисов и БД; новый отчёт добавляется по общему шаблону.
+- 3 DAG-а (`daily_sales_report`, `weekly_sales_summary`, `delivery_control_tower`) и 72 теста без Airflow-сервисов и БД; новый отчёт добавляется по общему шаблону.
 - `scripts/metrics_report.py` агрегирует success rate и p95 duration за N дней.
 
 Портфельный Data Engineering проект: платформа отчётов на Apache Airflow 3, где каждый отчёт — версионируемый DAG. Заменяет ручную выгрузку агрегатов из Postgres и перенос в Google Sheets воспроизводимым, идемпотентным пайплайном с DQ-валидацией, алертами и метриками запусков.
@@ -46,7 +46,7 @@
 | DAG | Расписание | Что делает | Приёмник |
 |-----|-----------|------------|----------|
 | `daily_sales_report` | `@daily` | Агрегат продаж за сутки (`sale_date`, `product_id`, `revenue`, `orders`) | Google Sheets (или CSV-фолбэк) |
-| `weekly_sales_summary` | `@weekly` | Сводка продаж за 7 суток по `category` (`category`, `revenue`, `orders`) | CSV ( Sheets опционально) |
+| `weekly_sales_summary` | `@weekly` | Сводка продаж за 7 суток по `category` (`category`, `revenue`, `orders`) | CSV (по умолчанию) или Google Sheets |
 | `delivery_control_tower` | вручную (`schedule=None`) | 8 задач: CSV → staging → DQ-гейт → витрины DuckDB → 5 анализов параллельно | файлы проекта `delivery-control-tower` |
 
 Каждый DAG строится по шаблону `fetch → validate → write → record_metrics` (`@task`-декораторы, Airflow 3 SDK). Окно — полуинтервал `[logical_date − N, logical_date)`; `catchup=False` — пропущенные периоды не догоняются, backfill явно через `airflow dags backfill`.
@@ -87,7 +87,8 @@ airflow_home/               # AIRFLOW_HOME: cfg, sqlite-метастор, лог
 ## Запуск
 
 ```bash
-uv sync                                   # зависимости
+uv sync                                   # зависимости для DAG-ов и тестов
+uv sync --group eda                       # + pandas/matplotlib для reports/eda/
 uv run pytest                             # тесты (без Airflow runtime)
 
 # Демо-данные в Postgres (синтетика, 10 000 строк/день; замер 2026-10-25 — 70 000 за 7 суток):
@@ -155,7 +156,7 @@ CI (`.github/workflows/ci.yml`) на каждый push и PR гоняет чет
 uv run ruff check .          # линт: E,W,F,I,B,C4,UP (line-length игнорируется)
 uv run ruff format --check . # формат; применить — uv run ruff format .
 uv run mypy                  # типы: dags/, scripts/, tests/
-uv run pytest                # 69 тестов, без Airflow-сервисов и БД (хуки замоканы)
+uv run pytest                # 72 теста, без Airflow-сервисов и БД (хуки замоканы)
 ```
 
 Конфиг — в `pyproject.toml` (`[tool.ruff]`, `[tool.mypy]`). `target-version = "py313"` выбран намеренно: на `py314` `ruff format` переписывает `except (TypeError, ValueError):` в PEP 758 `except TypeError, ValueError:` — валидно для 3.14, но ломает прогон на 3.13.

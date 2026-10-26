@@ -1,19 +1,23 @@
 """
 DAG: weekly_sales_summary
-Еженедельная сводка продаж по категориям: Postgres -> CSV (dev-фолбэк).
+Еженедельная сводка продаж по категориям: Postgres -> Google Sheets
+(dev-фолбэк: CSV).
 
 Второй DAG платформы (REQ-009): проверяет шаблон — переиспользует
 shared-модули (config, dq, alerts, metrics, output, windows), не дублируя код.
 
 Требуемые провайдеры:
-    apache-airflow-providers-postgres
+    apache-airflow-providers-postgres apache-airflow-providers-google
 Подключения (Admin -> Connections):
     postgres_default      -- Postgres с таблицей sales (колонка category)
+    google_cloud_default  -- сервисный аккаунт с доступом к Google Sheets API
 Конфигурация (Admin -> Variables, префикс AIRFLOW_CFG_):
 
     AIRFLOW_CFG_weekly_summary_output           -- "file" (дефолт) | "sheets"
     AIRFLOW_CFG_weekly_summary_postgres_conn_id -- по умолчанию postgres_default
     AIRFLOW_CFG_weekly_summary_spreadsheet_id   -- при output=sheets
+    AIRFLOW_CFG_weekly_summary_range_name       -- по умолчанию "Сводка!A1"
+    AIRFLOW_CFG_weekly_summary_google_conn_id   -- по умолчанию google_cloud_default
 
 Окно недели (REQ-009): [logical_date - 7 дней, logical_date) — 7 суток перед
 logical_date. catchup=False (REQ-008): пропущенные недели не догоняются
@@ -24,6 +28,7 @@ import logging
 from datetime import datetime, timedelta
 from pathlib import Path
 
+from airflow.providers.google.suite.hooks.sheets import GSheetsHook
 from airflow.providers.postgres.hooks.postgres import PostgresHook
 from airflow.sdk import DAG, task
 from shared.config import DAGConfig
@@ -77,6 +82,31 @@ def write_weekly_file(
     return data
 
 
+def write_weekly_rows(
+    spreadsheet_id: str,
+    range_name: str,
+    gcp_conn_id: str,
+    data: list[list[str]],
+    week_start: str,
+    output: str = "file",
+    out_dir: str | Path | None = None,
+) -> list[list[str]]:
+    """Запись результата. output="sheets" — Google Sheets; "file" — CSV (dev-фолбэк).
+
+    Возвращает data (pass-through) — record_metrics считает строки по данным.
+    """
+    if output == "file":
+        return write_weekly_file(data, week_start, out_dir)
+    hook = GSheetsHook(gcp_conn_id=gcp_conn_id)
+    hook.update_values(
+        spreadsheet_id=spreadsheet_id,
+        range_=range_name,
+        values=data,
+    )
+    logger.info("written %d rows -> %s", len(data) - 1, range_name)
+    return data
+
+
 # --- Адаптеры Airflow: конфиг + контекст, затем чистые функции ---
 
 
@@ -101,10 +131,18 @@ def validate_weekly(data: list[list[str]]) -> list[list[str]]:
 
 @task
 def write_weekly(data: list[list[str]], **context) -> list[list[str]]:
+    cfg = DAGConfig().weekly_summary()
     dag_run = context["dag_run"]
     anchor = dag_run.data_interval_start or dag_run.run_after
     week_start, _ = weekly_window(anchor)
-    return write_weekly_file(data, week_start.isoformat())
+    return write_weekly_rows(
+        spreadsheet_id=cfg["spreadsheet_id"],
+        range_name=cfg["range_name"],
+        gcp_conn_id=cfg["google_conn_id"],
+        data=data,
+        week_start=week_start.isoformat(),
+        output=cfg["output"],
+    )
 
 
 record_metrics = make_record_metrics_task()
@@ -116,7 +154,7 @@ with DAG(
     schedule="@weekly",
     default_args=DEFAULT_ARGS,
     catchup=False,
-    description="Еженедельная сводка продаж по категориям: Postgres -> CSV",
+    description="Еженедельная сводка продаж по категориям: Postgres -> CSV / Google Sheets",
     tags=["sales", "report", "weekly"],
     # Airflow типизирует callback как Callable[[Context], None], а @task на этапе
     # сборки DAG отдаёт XComArg — оба расходятся с прикладными аннотациями.
