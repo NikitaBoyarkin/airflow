@@ -27,9 +27,13 @@
 
 **На этой странице:** [Ситуация](#ситуация) · [Задача](#задача) · [Действия](#действия) · [Результат](#результат) · [DAG-и](#dag-и) · [Структура](#структура) · [Стек](#стек) · [Запуск](#запуск) · [Качество кода](#качество-кода) · [Поток данных](#поток-данных) · [Observability](#observability)
 
+**Public link:** [демо](https://nikitaboyarkin.github.io/demos/airflow/index.html) · [кейс](https://nikitaboyarkin.github.io/projects/airflow/) · [исходники](https://github.com/NikitaBoyarkin/airflow)
+
 ## Ситуация
 
 Ручной отчёт по продажам (SQL-клиент → копирование в Sheets) давал задержки, ошибки копирования и отсутствие воспроизводимости.
+
+**Данные.** Синтетика с фиксированным seed: `scripts/generate_sales_data.py` (`random.Random(42)`) наполняет таблицу `sales` в Postgres — 10 000 строк за сутки; воспроизводится одной командой из раздела «Запуск». Реальных данных в репозитории нет.
 
 ## Задача
 
@@ -105,11 +109,19 @@ uv sync                                   # зависимости для DAG-о
 uv sync --group eda                       # + pandas/matplotlib для reports/eda/
 uv run pytest                             # тесты (без Airflow runtime)
 
-# Демо-данные в Postgres (синтетика, 10 000 строк/день; замер 2026-10-25 — 70 000 за 7 суток):
+# Демо-данные в Postgres (синтетика, 10 000 строк/день; замер 2026-10-25 — 70 000 за 7 суток).
+# Предусловие: Postgres уже слушает 127.0.0.1:5434 (дефолты скрипта) — на чистом клоне это
+# сервис postgres из раздела «Docker Compose» ниже: docker compose up -d postgres.
+# Если БД именно контейнерная, её пользователь — postgres: добавьте --user postgres.
 uv run python scripts/generate_sales_data.py --days 7 --rows-per-day 10000
 
-# Airflow standalone (UI http://localhost:8082):
+# Airflow standalone (UI http://localhost:8082) — переменные окружения целиком в
+# подразделе «Свежий клон: три переменные до первого запуска» ниже; без
+# AIRFLOW__API__PORT api-server займёт 8080, где отвечает Trino:
 export AIRFLOW_HOME=$(pwd)/airflow_home
+export AIRFLOW__API__PORT=8082
+export AIRFLOW__CORE__EXECUTION_API_SERVER_URL=http://localhost:8082/execution/
+export AIRFLOW__CORE__DAGS_FOLDER=$(pwd)/dags
 uv run airflow standalone
 
 # Отчёт по метрикам запусков:
@@ -204,6 +216,10 @@ record_metrics   ──►  dag_metrics (success rate, p95 duration)
    падение ──► on_failure_callback ──► alert (лог) + failed-метрика
 ```
 
+![revenue vs orders в выходных CSV DAG-ов](reports/eda/figures/05_orders_vs_revenue.png)
+
+*Выход `daily_sales_report` (`data/out/*.csv`): точки ложатся на прямую OLS-фита — в синтетике `revenue` получается из `orders` умножением на фиксированную среднюю цену, поэтому связь структурная, а не сигнал о поведении.*
+
 ## Observability
 
 Каждый успешный запуск пишет строку в таблицу `dag_metrics` (Postgres): `dag_id`, `run_id`, `status`, `duration_s`, `rows_written`, `logical_date`. Провал фиксируется в DAG-level `on_failure_callback` (алерт + `failed`-метрика). `scripts/metrics_report.py` агрегирует success rate и p95 duration за N дней. Таблицы `sales` и `dag_metrics` создаются скриптом-генератором и DAG-ами автоматически (`CREATE TABLE IF NOT EXISTS`).
@@ -215,3 +231,11 @@ record_metrics   ──►  dag_metrics (success rate, p95 duration)
 ## Статус
 
 Портфельный проект; источник данных — синтетический (`scripts/generate_sales_data.py`). Google Sheets как приёмник требует реального сервисного аккаунта; dev-режим `output="file"` работает без внешних API.
+
+## Решение
+
+Автоматизировано: расписание, DQ-гейт перед записью, идемпотентная перезапись приёмника, алерты о падении и метрики запусков — всё это воспроизводится локально одной командой на синтетике, тесты идут без Airflow-сервисов и БД.
+
+Непроверенным осталось то, из чего складывается эффект: запись в Google Sheets требует реального сервисного аккаунта, а исходные симптомы (задержки, ошибки копирования) не измерены ни одним числом до внедрения.
+
+Поэтому читать кейс стоит как подтверждение применимости подхода и готовый шаблон нового отчёта, а не как отчёт о достигнутом сокращении задержек.
